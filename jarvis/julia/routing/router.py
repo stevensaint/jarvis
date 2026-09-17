@@ -22,6 +22,14 @@ class NoEligibleWorkerError(RuntimeError):
         self.decision = decision
 
 
+_PRIVACY_RANK = {
+    "LOCAL_ONLY": 0,
+    "REPOSITORY_ONLY": 1,
+    "PRIVATE_CLOUD": 2,
+    "PUBLIC_CLOUD": 3,
+}
+
+
 def _quality_for(worker: WorkerDescriptor, task: TaskProfile) -> float:
     if not task.required_capabilities:
         return worker.expected_quality
@@ -48,6 +56,10 @@ def evaluate_eligibility(worker: WorkerDescriptor, task: TaskProfile) -> tuple[s
         reasons.append("missing_tools:" + ",".join(missing_tools))
     if worker.privacy_class not in task.authorization.allowed_privacy_classes:
         reasons.append(f"privacy_not_allowed:{worker.privacy_class.value}")
+    elif _PRIVACY_RANK[worker.privacy_class.value] > _PRIVACY_RANK[task.privacy.value]:
+        reasons.append(
+            f"privacy_requirement:{worker.privacy_class.value}>{task.privacy.value}"
+        )
     missing_modes = sorted(task.required_execution_modes - worker.execution_modes)
     if missing_modes:
         reasons.append("execution_scope:" + ",".join(missing_modes))
@@ -179,4 +191,3 @@ class DynamicWorkerRouter:
             update={"excluded_worker_ids": task.excluded_worker_ids | {failed_worker_id}}
         )
         return self.route(preserved, require_selection=require_selection)
-

@@ -260,6 +260,19 @@ def test_i_failure_cannot_expand_computer_use_authority() -> None:
         )
 
 
+def test_privacy_requirement_is_a_hard_gate() -> None:
+    registry = WorkerRegistry()
+    registry.register(
+        _worker("cloud", "provider-a", privacy=PrivacyClass.PRIVATE_CLOUD)
+    )
+    task = _profile("provider-a").model_copy(update={"privacy": PrivacyClass.LOCAL_ONLY})
+    decision = DynamicWorkerRouter(registry).route(task, require_selection=False)
+    assert decision.selected_worker_id is None
+    assert "privacy_requirement:PRIVATE_CLOUD>LOCAL_ONLY" in (
+        decision.candidates[0].rejection_reasons
+    )
+
+
 def test_j_explainability_roundtrips_from_store(tmp_path: Path) -> None:
     store = WorkerRoutingStore(tmp_path / "routing.db")
     store.open()

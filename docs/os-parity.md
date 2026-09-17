@@ -1,5 +1,21 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Julia worker registry and dynamic routing (2026-09-17, T3)
+
+The registry, task profiler, eligibility engine, utility scoring, routing
+ledger, outcome aggregates, and diagnostics API use the same Python/Pydantic,
+SQLite, and ASGI implementation on Windows, macOS, Linux, desktop, and headless
+hosts. They introduce no native dependency and perform no network health check
+on the delegation path. Platform-specific execution remains inside the existing
+worker adapters and containment implementations.
+
+Contract tests exercise the common router under `win32`, `darwin`, and `linux`
+platform labels, plus Python/SQL/TypeScript enum parity. The local-model
+benchmark is physical evidence only for the tested Apple M3/24 GB macOS host;
+it does not establish equivalent latency or memory behavior on Windows/Linux
+hardware. Missing provider credentials and tools degrade to explicit registry
+states and cannot be optimized around.
+
 ## Full Chrome window preview (2026-09-12, T3; acceptance open)
 
 Windows interactive sessions now capture the owned Chrome window with Windows
