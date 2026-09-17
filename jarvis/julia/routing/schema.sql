@@ -57,4 +57,3 @@ CREATE TABLE IF NOT EXISTS julia_worker_outcomes (
 
 CREATE INDEX IF NOT EXISTS idx_julia_outcomes_worker_category
     ON julia_worker_outcomes(worker_id, task_category, recorded_at_ms);
-

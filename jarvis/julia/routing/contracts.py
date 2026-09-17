@@ -223,4 +223,3 @@ class OutcomeRecord(_FrozenModel):
 
 def jsonable(value: BaseModel) -> dict[str, Any]:
     return value.model_dump(mode="json")
-

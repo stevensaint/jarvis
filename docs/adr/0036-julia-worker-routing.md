@@ -1,7 +1,7 @@
 # ADR-0036: Julia owns provider-neutral worker routing
 
-**Status:** Accepted  
-**Date:** 2026-09-17  
+**Status:** Accepted
+**Date:** 2026-09-17
 **Tier:** T3 contract change
 
 ## Context
@@ -72,4 +72,3 @@ If no authorized eligible worker remains, routing raises a fail-closed outcome.
 - routing metadata volume warrants retention/compaction;
 - a provider supplies a push health signal rather than a local probe; or
 - operators need a dedicated routing dashboard beyond the diagnostics API.
-

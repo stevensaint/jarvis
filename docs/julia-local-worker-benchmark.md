@@ -1,7 +1,7 @@
 # Julia Sprint 1 local worker benchmark
 
-Date: 2026-09-17  
-Host: MacBook Air, Apple M3 (8 cores), 24 GB unified memory  
+Date: 2026-09-17
+Host: MacBook Air, Apple M3 (8 cores), 24 GB unified memory
 Runtime: Ollama 0.34.1
 
 ## Purpose

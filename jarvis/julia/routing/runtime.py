@@ -223,4 +223,3 @@ def populate_runtime_registry(registry: WorkerRegistry, cfg: Any) -> None:
 def refresh_runtime_availability(registry: WorkerRegistry) -> None:
     for worker in registry.snapshot():
         registry.set_availability(worker.worker_id, _provider_availability(worker.provider))
-

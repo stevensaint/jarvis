@@ -1,8 +1,8 @@
 # Julia Sprint 1 worker routing validation
 
-**Date:** 2026-09-17  
-**Branch:** `sprint-1-worker-routing`  
-**Foundation:** `jarvis-baseline-v0.1` / `181f2c6e5a99efd9706665430a20d7b135a8a6f4`  
+**Date:** 2026-09-17
+**Branch:** `sprint-1-worker-routing`
+**Foundation:** `jarvis-baseline-v0.1` / `181f2c6e5a99efd9706665430a20d7b135a8a6f4`
 **Verdict:** **ACCEPT WITH CONDITIONS**
 
 ## Executive summary
