@@ -233,12 +233,13 @@ class JuliaRuntimeStore:
             ExecutionState.SUCCEEDED.value,
             ExecutionState.FAILED.value,
             ExecutionState.CANCELLED.value,
+            ExecutionState.INTERRUPTED.value,
         )
         with self._lock:
             rows = self.conn.execute(
                 """
                 SELECT attempt_json FROM julia_execution_attempts
-                WHERE state NOT IN (?, ?, ?) ORDER BY created_at_ms
+                WHERE state NOT IN (?, ?, ?, ?) ORDER BY created_at_ms
                 """,
                 terminal,
             ).fetchall()

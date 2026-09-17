@@ -60,6 +60,23 @@ def _hardware_profile() -> str:
         values = [value for value in (chip, memory) if value]
         if values:
             return " / ".join(values)
+        # Hardened/sandboxed macOS processes may be denied sysctl reads. The
+        # public hardware section is the fallback; parse only chip + memory so
+        # serial numbers and platform identifiers never enter diagnostics.
+        raw = _command_text(
+            ["/usr/sbin/system_profiler", "SPHardwareDataType", "-json"]
+        )
+        try:
+            hardware = json.loads(raw).get("SPHardwareDataType", [{}])[0]
+            safe_values = [
+                str(hardware.get(key, "")).strip()
+                for key in ("chip_type", "physical_memory")
+            ]
+            safe_values = [value for value in safe_values if value]
+            if safe_values:
+                return " / ".join(safe_values)
+        except (AttributeError, IndexError, TypeError, ValueError):
+            pass
     return platform.platform()
 
 

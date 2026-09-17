@@ -68,6 +68,10 @@ data/*
 data/**/
 # The dev instance's runtime data (jarvis/core/instance.py) — same rule as data/.
 data-dev/
+# Julia's machine-local identity, PID, and service logs are deliberately kept
+# outside the portable data root and never belong in source control.
+data-node/
+data-*-node/
 *.db
 *.sqlite
 *.sqlite3

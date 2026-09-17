@@ -191,6 +191,7 @@ def test_d_e_i_recovery_preserves_authority_and_prevents_duplicate_execution(
     assert len(records) == 1
     assert records[0].disposition is RecoveryDisposition.MANUAL_RECONCILIATION
     assert records[0].authorization == authority
+    assert recovery.recover_interrupted() == ()
     with pytest.raises(DuplicateExecutionError):
         recovery.begin(
             idempotency_key="objective:task:iteration-0",
