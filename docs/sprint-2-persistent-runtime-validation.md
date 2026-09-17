@@ -14,12 +14,11 @@ restarts after an unexpected process failure, retains the same logical node,
 and exposes lifecycle, node, health, and recovery diagnostics through both a
 CLI and local API.
 
-All Sprint 2 code-level and live-process acceptance paths pass. The final
-verdict remains conditional because a disruptive physical Mac reboot was not
-performed during the active engineering session. The installed LaunchAgent
-contract, login bootstrap, clean-stop behavior, crash restart, durable recovery,
-and stable identity were tested independently; the physical reboot observation
-remains S2-001. Sprint 3 was not started.
+All Sprint 2 code-level and live-process acceptance paths pass. A controlled
+physical reboot completed on 2026-09-17, and Julia's LaunchAgent started the
+persistent runtime afterward without manual development-environment startup.
+The final verdict remains conditional because other inherited and Sprint 2
+conditions remain. Sprint 3 was not started.
 
 ## Architecture
 
@@ -149,11 +148,11 @@ path failed before measurement and did not expose a product defect.
 | Test | Status | Evidence |
 |---|---|---|
 | A — Background Runtime | **PASS** | Installed LaunchAgent remained healthy as a headless process without a Terminal or Julia UI owner. |
-| B — Automatic Startup | **PASS WITH CONDITION** | `RunAtLoad` installation/bootstrap and launchd start behavior passed; a physical logout/reboot cycle was not performed. |
+| B — Automatic Startup | **PASS** | A controlled physical reboot completed on 2026-09-17; the LaunchAgent started Julia's persistent runtime without manual development-environment startup. |
 | C — Process Recovery | **PASS** | Live `SIGKILL` replaced the process, preserved runtime data, and retained node identity. |
-| D — Host Restart Recovery | **PASS WITH CONDITION** | Persistent-store restart recovery and disposition reconstruction passed in a fresh process; physical host reboot remains unobserved. |
+| D — Host Restart Recovery | **PASS WITH CONDITION** | Persistent-store restart recovery and disposition reconstruction passed in a fresh process; the controlled reboot confirmed startup but did not include an unfinished-objective fixture. |
 | E — Duplicate-Execution Protection | **PASS** | Ambiguous side effects produce manual reconciliation, committed effects are not rerun, and duplicate idempotency keys are rejected. |
-| F — Stable Node Identity | **PASS WITH CONDITION** | Identity survived real service process restarts; physical reboot persistence remains unobserved. |
+| F — Stable Node Identity | **PASS WITH CONDITION** | Identity survived real service process restarts; an explicit before/after node-ID comparison was not recorded for the controlled reboot. |
 | G — Node Availability Gate | **PASS** | An otherwise optimal worker on an unavailable node is rejected before scoring. |
 | H — Node-Aware Replanning | **PASS** | Interrupted availability preserves state and restricts replanning to authorized eligible nodes/workers. |
 | I — Authority Containment | **PASS** | Recovery uses the immutable original authorization snapshot. |
@@ -220,11 +219,10 @@ No inherited condition regressed.
 
 ### S2-001 — Physical host reboot observation
 
-- Classification: **DEFERRED**.
-- A real reboot would disrupt the active workstation and was not authorized as
-  part of this run. LaunchAgent login configuration, actual process crash
-  restart, fresh-process recovery, and identity persistence all pass. Record a
-  controlled reboot observation before removing this condition.
+- Classification: **FIXED**.
+- Controlled physical reboot completed 2026-09-17. Julia's LaunchAgent
+  successfully started the persistent runtime after reboot without manual
+  development-environment startup.
 
 ### S2-002 — Development-checkout service path
 
@@ -252,8 +250,8 @@ No inherited condition regressed.
 Julia can remain available as a persistent system on the trusted Mac, recover
 from real process failure, preserve objectives and authority, model the machine
 as a replaceable execution node, prevent blind duplicate side effects, and run
-without an open Terminal, UI, or worker session. The host-reboot portion of the
-acceptance evidence remains conditional rather than being inferred from the
-passing process and LaunchAgent tests.
+without an open Terminal, UI, or worker session. Automatic startup after a
+controlled physical reboot is now directly observed rather than inferred from
+the passing process and LaunchAgent tests.
 
 Sprint 2 stops here. Sprint 3 is not started.
