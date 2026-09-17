@@ -1,5 +1,28 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Julia persistent runtime and nodes (2026-09-17, T3)
+
+Lifecycle, node, execution, recovery, idempotency, portability, routing, SQLite,
+and ASGI contracts are portable Python and import cleanly on Windows, macOS,
+Linux, desktop, and headless installations. Machine-specific behavior is behind
+the service adapter and capability check; a non-macOS host can inspect and use
+the common stores without importing a native service library.
+
+macOS has the live native implementation: a per-user `com.julia.core`
+LaunchAgent runs the headless runtime with `RunAtLoad=true` and
+`KeepAlive.SuccessfulExit=false`. On the physical Apple M3/24 GB host it ran
+without a UI, survived a forced process kill with a new PID and the same
+`node_id`, honored pause/resume, respected a clean stop, and restarted on
+request. A real host reboot was deliberately not performed during the active
+engineering session; automatic-login and host-restart acceptance remains
+conditional until that observation is recorded.
+
+Windows and Linux use the same runtime/node contracts but do not gain a native
+service-manager installer in Sprint 2. The existing desktop autostart behavior
+is unchanged, base boot remains dependency-free, and no Windows SYSTEM service
+is introduced (AP-17). A future service adapter must run in the user session and
+pass the same restart/authority/idempotency contracts before parity is claimed.
+
 ## Julia worker registry and dynamic routing (2026-09-17, T3)
 
 The registry, task profiler, eligibility engine, utility scoring, routing
