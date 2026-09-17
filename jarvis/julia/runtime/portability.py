@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 import sqlite3
 from pathlib import Path
 
@@ -39,8 +38,3 @@ def export_julia_state(source: RuntimePaths, destination_core_root: Path) -> tup
     )
     written.append(manifest)
     return tuple(written)
-
-
-def remove_portability_fixture(path: Path) -> None:
-    """Test helper for disposable migration roots only."""
-    shutil.rmtree(path)
