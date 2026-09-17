@@ -987,6 +987,66 @@ _ACTION_VERB_RE = re.compile(
     re.IGNORECASE,
 )
 
+_READ_ONLY_VERB_RE = re.compile(
+    r"\b(read|inspect|review|report|show|tell|list|find|search|check|"
+    r"look\s+up|summari[sz]e|identify|describe|explain|"
+    r"lies|lese|prüf|pruef|zeig|liste|finde|suche|beschreib|erklär|erklaer)\w*\b",
+    re.IGNORECASE,
+)
+
+_READ_ONLY_MUTATION_RE = re.compile(
+    r"\b(?:create|write|build|implement|generate|save|refactor|fix|modify|edit|"
+    r"rename|copy|install|launch|deploy|push|commit|delete|remove|send|post|"
+    r"email|download|click|draft|export|convert|render|compile|transform|"
+    r"package|archive|produce|extract|migrate|update|upgrade|backup|sync|"
+    r"compress|zip|scrape|plot)(?:s|d|ed|ing)?\b",
+    re.IGNORECASE,
+)
+
+
+def _has_positive_readonly_mutation(body: str) -> bool:
+    """Ignore an explicit prohibition (``do not modify``), not a real action."""
+    for match in _READ_ONLY_MUTATION_RE.finditer(body):
+        prefix = body[max(0, match.start() - 16) : match.start()].lower()
+        if re.search(r"(?:do not|don't|never)\s+$", prefix):
+            continue
+        return True
+    return False
+
+
+def is_readonly_request(prompt: str) -> bool:
+    """True when the request asks only to inspect existing information.
+
+    Unlike :func:`is_informational_request`, an input filename is allowed here:
+    ``read README.md and report its heading`` has a named file but no output
+    artefact.  Any mutating/action verb wins, so ``read x and write y`` remains
+    a file-delivery task and cannot pass the empty-diff critic gate.
+    """
+    body = _normalize_informational_idioms(
+        _strip_spawn_meta(_request_body(prompt or ""))
+    ).strip()
+    if not body or _has_positive_readonly_mutation(body):
+        return False
+    return bool(_READ_ONLY_VERB_RE.search(body))
+
+
+_READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "read",
+        "grep",
+        "glob",
+        "ls",
+        "providers-list",
+        "provider-test",
+    }
+)
+
+
+def has_only_readonly_tool_evidence(stream_text: str) -> bool:
+    """True when every observed tool call is from the read-only allowlist."""
+    calls = extract_stream_evidence(stream_text).tool_calls
+    return bool(calls) and all(call.strip().lower() in _READ_ONLY_TOOL_NAMES for call in calls)
+
 # File / artefact markers — a named file or a real extension means a deliverable.
 _ARTEFACT_RE = re.compile(
     r"(file named|datei|\.(md|py|txt|html?|json|csv|js|ts|tsx|jsx|css|"

@@ -197,6 +197,7 @@ def _make_kontrollierer(
     worker_factory_fn=None,
     decomposer_plan: MissionPlan | None = None,
     budget: BudgetTracker | None = None,
+    provider_binding=None,
 ) -> Kontrollierer:
     """Helper function to build a Kontrollierer with fakes."""
 
@@ -229,6 +230,7 @@ def _make_kontrollierer(
         worker_factory=worker_factory_fn,
         job_factory=FakeJobObject,
         isolation_root=tmp_path / "missions",
+        provider_binding=provider_binding,
     )
 
 
@@ -515,6 +517,44 @@ async def test_publishes_mission_plan_ready(
     events = await manager.store.events_for_mission(mid)
     plan_events = [e for e in events if e.payload.event_type == "MissionPlanReady"]
     assert len(plan_events) == 1
+
+
+@pytest.mark.asyncio
+async def test_provider_binding_is_immutable_from_plan_through_spawn(
+    manager: MissionManager, tmp_path: Path
+) -> None:
+    """A legacy Claude hint cannot override an OpenAI authorization binding."""
+    seen_steps: list[Step] = []
+    worker = FakeWorker()
+    worker.provider = "openai"
+
+    def factory(step: Step):
+        seen_steps.append(step)
+        return worker
+
+    plan = MissionPlan(
+        steps=[Step(slug="inspect", prompt="inspect repo", worker_cli="claude")],  # type: ignore[arg-type]
+        n_workers=1,
+        expected_output="inspection",
+    )
+    k = _make_kontrollierer(
+        manager=manager,
+        tmp_path=tmp_path,
+        critic=FakeCriticRunner(_make_approve_verdict()),
+        worker_factory_fn=factory,
+        decomposer_plan=plan,
+        provider_binding=lambda: "openai",
+    )
+    mid = await manager.dispatch(prompt="Use OpenAI only")
+    await k.run_mission(mid)
+
+    assert seen_steps and {step.provider_binding for step in seen_steps} == {"openai"}
+    events = await manager.store.events_for_mission(mid)
+    ready = next(e.payload for e in events if e.payload.event_type == "MissionPlanReady")
+    assert ready.plan[0]["worker_cli"] == "configured"
+    assert ready.plan[0]["provider_binding"] == "openai"
+    spawned = next(e.payload for e in events if e.payload.event_type == "WorkerSpawned")
+    assert spawned.provider == "openai"
 
 
 @pytest.mark.asyncio

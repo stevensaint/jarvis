@@ -59,6 +59,13 @@ def main(argv: list[str] | None = None) -> int:
 
     install_root = Path(__file__).resolve().parents[2]
     os.chdir(install_root)
+    # The native embedded interpreter does not always seed ``sys.path`` with
+    # the script directory or honour an editable-install finder.  Make the
+    # managed checkout explicit before importing Jarvis so the signed app can
+    # still launch after the venv/editable metadata is refreshed.
+    install_root_str = str(install_root)
+    if install_root_str not in sys.path:
+        sys.path.insert(0, install_root_str)
 
     # Resolve the editable managed checkout only at runtime. Keeping this
     # import dynamic prevents the alias builder from trying to package the

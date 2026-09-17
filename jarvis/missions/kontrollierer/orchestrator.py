@@ -697,6 +697,7 @@ def _worker_progress_note(ev: Any) -> str | None:
 
 # Type aliases
 WorkerFactoryFn = Callable[[Step], WorkerProtocol]
+ProviderBindingFn = Callable[[], str | None]
 EnvBuilderFn = Callable[[Path], dict[str, str]]
 JobFactoryFn = Callable[[], Any]  # () -> WindowsJobObject (async context manager)
 
@@ -760,6 +761,7 @@ class Kontrollierer:
         worker_factory: WorkerFactoryFn,
         job_factory: JobFactoryFn,
         isolation_root: Path,
+        provider_binding: ProviderBindingFn | None = None,
         max_workers: int = MAX_WORKERS_PER_MISSION,
         # Cross-mission concurrency cap (2026-05-24): the worker AND the critic
         # both shell out to `claude` over the same Claude Max OAuth. When the
@@ -796,6 +798,7 @@ class Kontrollierer:
         self._env_builder = env_builder
         self._budget = budget
         self._worker_factory = worker_factory
+        self._provider_binding = provider_binding
         self._job_factory = job_factory
         self._isolation_root = isolation_root
         self._max_workers = max(1, min(max_workers, MAX_WORKERS_PER_MISSION))
@@ -989,6 +992,21 @@ class Kontrollierer:
             await self._fail_mission(mission_id, f"decompose_failed: {exc}")
             return MissionState.FAILED
 
+        # Resolve authorization exactly once, before the plan is published or
+        # any worker starts.  Copy the binding into every immutable Step so a
+        # config change, retry, or model-produced field cannot switch families.
+        if self._provider_binding is not None:
+            resolved_provider = (self._provider_binding() or "").strip().lower()
+            if resolved_provider:
+                plan = plan.model_copy(
+                    update={
+                        "steps": [
+                            step.model_copy(update={"provider_binding": resolved_provider})
+                            for step in plan.steps
+                        ]
+                    }
+                )
+
         # MissionPlanReady on bus + DB
         await self._publish_plan_ready(mission_id, plan)
         logger.info(
@@ -1052,6 +1070,16 @@ class Kontrollierer:
                 await self._fail_mission(
                     mission_id, "attempts_timed_out", partial_artifacts=partial
                 )
+                return MissionState.FAILED
+            except ExceptionGroup as exc:
+                # A per-step implementation defect must not strand the durable
+                # mission forever in CRITIQUING.  TaskGroup wraps child errors;
+                # record the full cause and close the state machine honestly.
+                logger.exception(
+                    "run_mission: mission %s worker task crashed", mission_id,
+                    exc_info=exc,
+                )
+                await self._fail_mission(mission_id, "task_error")
                 return MissionState.FAILED
 
         # Aggregate
@@ -1965,6 +1993,10 @@ class Kontrollierer:
                             worker_id=worker_id,
                             pid=int(pid) if pid else 0,
                             cli=worker.cli,
+                            provider=(
+                                getattr(worker, "provider", None)
+                                or getattr(step, "provider_binding", None)
+                            ),
                             model=step.model,
                             worktree=str(worktree),
                             session_id=sid,
@@ -3050,6 +3082,7 @@ class Kontrollierer:
         worker_id: str,
         pid: int,
         cli: str,
+        provider: str | None,
         model: str,
         worktree: str,
         session_id: str | None,
@@ -3065,6 +3098,7 @@ class Kontrollierer:
                 step=step.model_dump(),
                 pid=pid,
                 cli=cli,  # type: ignore[arg-type]
+                provider=provider,
                 model=model,
                 worktree=worktree,
                 session_id=session_id,

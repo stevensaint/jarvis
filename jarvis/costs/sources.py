@@ -474,7 +474,7 @@ def _mission_entries(path: Path | None, since_ms: int, until_ms: int) -> Iterato
                 continue
             raw_step = meta.get("step")
             step: dict[str, Any] = raw_step if isinstance(raw_step, dict) else {}
-            cli = str(meta.get("cli") or step.get("worker_cli") or "")
+            cli = str(meta.get("provider") or meta.get("cli") or step.get("worker_cli") or "")
             model = str(meta.get("model") or step.get("model") or "")
             spawned[str(r["worker_id"] or "")] = (cli, model)
         for row in conn.execute(

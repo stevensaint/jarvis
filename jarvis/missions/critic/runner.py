@@ -39,8 +39,10 @@ from ..stream_evidence import (
     capability_refusal_answer,
     diff_has_action_evidence,
     extract_verified_external_actions,
+    has_only_readonly_tool_evidence,
     informational_file_answer,
     is_informational_request,
+    is_readonly_request,
     readonly_answer,
 )
 from ..workers.claude_direct_worker import _claude_error_is_model_unavailable
@@ -924,7 +926,13 @@ class CriticRunner:
 
         _defer_empty_diff_to_llm = bool(_extract_tool_call_evidence(worker_log))
 
-        if not worker_diff.strip() and is_informational_request(mission_prompt):
+        if not worker_diff.strip() and (
+            is_informational_request(mission_prompt)
+            or (
+                is_readonly_request(mission_prompt)
+                and has_only_readonly_tool_evidence(worker_log)
+            )
+        ):
             # Pure informational/advisory requests have no file deliverable.
             # The spoken answer is the result, including when the worker used
             # search/read tools before answering. File, code, and side-effect

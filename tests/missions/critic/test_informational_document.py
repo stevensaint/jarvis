@@ -22,6 +22,7 @@ A code diff, a named-file/side-effect do-task, or a stub never qualifies.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -105,6 +106,87 @@ async def _run(
         env={},
         _capability_check=False,
     )
+
+
+@pytest.mark.asyncio
+async def test_verified_readonly_file_answer_approves_without_llm_retry(
+    tmp_path: Path,
+) -> None:
+    """A named input file is not an output artefact when the task only reads it."""
+    stream = "\n".join(
+        [
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "tool_use", "name": "Read", "input": {}}
+                        ]
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "result": "First heading: Your personal AI ecosystem.",
+                }
+            ),
+        ]
+    )
+    verdict = await _FakeCritic(_critic_verdict("revise")).run(
+        mission_prompt=(
+            "Using only the configured OpenAI provider, read README.md and "
+            "report its first heading. Do not modify files."
+        ),
+        worker_diff="",
+        worker_log=stream,
+        prior_reflections="",
+        iteration=0,
+        worktree=tmp_path,
+        env={},
+        _capability_check=False,
+    )
+    assert verdict.verdict == "approve"
+    assert verdict.summary.startswith("Informational request answered")
+
+
+@pytest.mark.asyncio
+async def test_readonly_request_does_not_approve_mutating_tool_evidence(
+    tmp_path: Path,
+) -> None:
+    stream = "\n".join(
+        [
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "tool_use", "name": "Write", "input": {}}
+                        ]
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "result": "First heading: unverified after a write call.",
+                }
+            ),
+        ]
+    )
+    verdict = await _FakeCritic(_critic_verdict("revise")).run(
+        mission_prompt="Read README.md and report its first heading.",
+        worker_diff="",
+        worker_log=stream,
+        prior_reflections="",
+        iteration=0,
+        worktree=tmp_path,
+        env={},
+        _capability_check=False,
+    )
+    assert verdict.verdict == "revise"
 
 
 @pytest.mark.asyncio

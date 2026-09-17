@@ -23,9 +23,10 @@ def test_step_requires_slug_and_prompt() -> None:
         Step(slug="x")  # type: ignore[call-arg]
 
 
-def test_step_defaults_worker_cli_claude() -> None:
+def test_step_provider_is_orchestrator_configured() -> None:
     s = Step(slug="x", prompt="do x")
-    assert s.worker_cli == "claude"
+    assert s.worker_cli == "configured"
+    assert Step(slug="legacy", prompt="do x", worker_cli="claude").worker_cli == "configured"  # type: ignore[arg-type]
     # Default model is "" since 9769f7b — the worker resolves its own model
     # (ClaudeDirectWorker uses primary.model; CodexDirectWorker omits --model
     # when empty, since ChatGPT-OAuth rejects "sonnet" with HTTP 400). The

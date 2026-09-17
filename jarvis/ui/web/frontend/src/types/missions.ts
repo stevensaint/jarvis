@@ -68,6 +68,7 @@ export interface WorkerSpawned extends BasePayload {
   step: Record<string, unknown>;
   pid: number;
   cli: WorkerCli;
+  provider?: string | null;
   model: string;
   worktree: string;
   session_id: string | null;

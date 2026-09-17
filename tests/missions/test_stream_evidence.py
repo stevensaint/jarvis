@@ -377,9 +377,11 @@ def test_summarize_answers_word_boundary_without_punctuation() -> None:
 # never the worker's claim, so the anti-hallucination veto still fires for a
 # do-task that produced nothing.
 from jarvis.missions.stream_evidence import (  # noqa: E402
+    has_only_readonly_tool_evidence,
     informational_file_answer,
     is_clarification_only_answer,
     is_informational_request,
+    is_readonly_request,
 )
 
 # The standing quality directive spawn_worker prepends to EVERY mission prompt
@@ -417,6 +419,37 @@ def test_is_informational_request_false_for_do_tasks() -> None:
     assert not is_informational_request(
         f"{_DIRECTIVE}\n\nCan you open Chrome and go to example.com?"
     )
+
+
+def test_is_readonly_request_accepts_named_input_but_rejects_mutation() -> None:
+    prompt = (
+        "Using only the configured OpenAI provider, read README.md and report "
+        "its first heading. Do not modify files."
+    )
+    assert is_readonly_request(prompt)
+    assert not is_readonly_request("Read README.md and write the heading to result.txt")
+    assert not is_readonly_request("Inspect config.py and modify the timeout")
+
+
+def test_readonly_tool_evidence_rejects_mutating_tool_calls() -> None:
+    read_stream = _stream(
+        [
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "tool_use", "name": "Read"}]},
+            }
+        ]
+    )
+    write_stream = _stream(
+        [
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "tool_use", "name": "Write"}]},
+            }
+        ]
+    )
+    assert has_only_readonly_tool_evidence(read_stream)
+    assert not has_only_readonly_tool_evidence(write_stream)
 
 
 def test_is_informational_request_false_for_noun_phrase_do_tasks() -> None:

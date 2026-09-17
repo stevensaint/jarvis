@@ -1161,7 +1161,11 @@ async def bootstrap_missions(
         # 2026-06-21 incident was a process that booted before the codex pin and
         # kept routing every heavy mission to the ClaudeDirectWorker (Opus)
         # fallback for hours. Degrades to the boot snapshot on any read failure.
-        live_provider = _live_subagent_provider(sub_jarvis_provider)
+        # The orchestrator stamps a once-per-mission immutable authorization
+        # binding onto every Step.  The live lookup remains only for legacy
+        # callers/tests that construct a Step outside that flow.
+        bound_provider = (getattr(step, "provider_binding", "") or "").strip().lower()
+        live_provider = bound_provider or _live_subagent_provider(sub_jarvis_provider)
         kind = _select_subagent_worker_kind(live_provider, getattr(step, "model", "") or "")
         if kind == "claude_direct":
             # B3 (open-source AP-22): an Anthropic-API-key-only user has NO `claude`
@@ -1259,6 +1263,11 @@ async def bootstrap_missions(
             # `_resolve_api_agent_worker` (viability-gated, cross-family
             # fallback, honest Claude last resort).
             provider = live_provider or ""
+            if bound_provider:
+                # Fail closed. ApiAgentWorker will report the bound family's
+                # own missing/auth/quota error; it must not silently cross to a
+                # different provider after authorization has been published.
+                return ApiAgentWorker(provider, capability_inventory=capability_inventory)
             return _resolve_api_agent_worker(provider, task_text, capability_inventory)
         if kind == "gemini":
             # B4 (open-source AP-22): no Gemini CLI but a Gemini API key → run the
@@ -1310,6 +1319,7 @@ async def bootstrap_missions(
         worker_factory=_worker_factory,
         job_factory=_default_job_factory,
         isolation_root=isolation_root,
+        provider_binding=lambda: _live_subagent_provider(sub_jarvis_provider),
         max_workers=max_workers,
         safety_enabled=safety_enabled,
         extra_blocked_globs=extra_blocked_globs,

@@ -72,7 +72,7 @@ function buildTree(
       name: ws.worker_id.slice(0, 8),
       kind: "worker",
       workerId: ws.worker_id,
-      workerCli: ws.cli,
+      workerCli: ws.provider ?? ws.cli,
     }));
     return {
       id: m.id,

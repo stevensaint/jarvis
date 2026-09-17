@@ -116,6 +116,20 @@ def _resolve_codex_binary() -> str | None:
     :func:`_resolve_codex_argv_prefix` instead — it returns the full argv
     prefix (``node`` + ``bin/codex.js``) that sidesteps the ``codex.CMD`` shim.
     """
+    # Use the same configured binary authority as auth/status and agent chat.
+    # A GUI-launched app often cannot see the ChatGPT-bundled binary on PATH.
+    try:
+        from jarvis.codex_auth import CodexAuthService
+        from jarvis.core.config import load_config
+
+        configured = (load_config().codex.binary_path or "").strip()
+        if configured:
+            resolved = CodexAuthService(binary_path=configured)._resolve_binary()
+            if resolved:
+                return resolved
+    except Exception:  # noqa: BLE001 — PATH fallback remains available
+        logger.debug("Codex configured-binary resolution failed", exc_info=True)
+
     for name in ("codex", "codex.cmd", "codex.exe"):
         path = shutil.which(name)
         if path:
@@ -149,6 +163,12 @@ def _resolve_codex_argv_prefix() -> list[str]:
     install locations when the inherited PATH is degraded — otherwise the very
     PATH gap that breaks ``codex.CMD`` would also hide node from this bypass.
     """
+    configured_binary = _resolve_codex_binary()
+    # Native distributions (including ChatGPT.app) are directly executable;
+    # only npm .cmd shims need the node + codex.js bypass below.
+    if configured_binary and not configured_binary.lower().endswith((".cmd", ".bat")):
+        return [configured_binary]
+
     node = resolve_node_executable()
     if node:
         for name in ("codex", "codex.cmd", "codex.exe"):
@@ -161,7 +181,37 @@ def _resolve_codex_argv_prefix() -> list[str]:
             candidate = cli_dir / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
             if candidate.is_file():
                 return [node, str(candidate)]
-    return [_resolve_codex_binary() or "codex"]
+    return [configured_binary or "codex"]
+
+
+def _codex_env_with_execution_host(
+    env: dict[str, str], argv_prefix: list[str] | None = None
+) -> dict[str, str]:
+    """Expose a packaged ``codex-code-mode-host`` to the Codex child only.
+
+    ChatGPT.app ships the helper beside its bundled ``codex`` executable, but
+    macOS GUI processes do not put that Resources directory on PATH.  Codex
+    therefore reported the host as missing and expanded into unrelated GUI
+    tools.  This scoped PATH addition makes the packaged host discoverable
+    without mutating the user's shell or installing a global symlink.
+    """
+    prefix = argv_prefix or _resolve_codex_argv_prefix()
+    if not prefix:
+        return dict(env)
+    executable = Path(prefix[0]).expanduser()
+    if executable.name.lower().startswith("node") and len(prefix) > 1:
+        executable = Path(prefix[1]).expanduser()
+    try:
+        executable = executable.resolve()
+    except OSError:
+        return dict(env)
+    helper = executable.parent / "codex-code-mode-host"
+    if not helper.is_file():
+        return dict(env)
+    result = dict(env)
+    current = result.get("PATH", "")
+    result["PATH"] = str(helper.parent) + (os.pathsep + current if current else "")
+    return result
 
 
 def _codex_oauth_available() -> bool:
@@ -586,6 +636,7 @@ class CodexDirectWorker:
         # is dropped only when a ChatGPT (OAuth) login exists, so the free
         # subscription wins; an API-key-only setup keeps the key (API mode).
         env_for_codex = _build_codex_env(env, oauth_available=_codex_oauth_available())
+        env_for_codex = _codex_env_with_execution_host(env_for_codex)
         if broker_binding is not None:
             env_for_codex = broker_binding.apply_environment(env_for_codex)
 

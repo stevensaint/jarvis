@@ -49,6 +49,9 @@ class WorkerSpawned(_PayloadBase):
     cli: Literal["claude", "codex", "python", "browser"]
     model: str
     worktree: str
+    # The authorized provider family. ``cli`` is only the transport harness
+    # and may be "claude" for provider-neutral in-process workers.
+    provider: str | None = None
     session_id: str | None = None
 
 

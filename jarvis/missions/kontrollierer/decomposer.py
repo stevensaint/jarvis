@@ -22,7 +22,7 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import Any, Final, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ..ids import uuid7_str
 
@@ -156,7 +156,16 @@ class Step(BaseModel):
     task_id: str = Field(default_factory=uuid7_str)
     slug: str  # short kebab-case for worktree naming (e.g. "refactor-auth")
     prompt: str  # complete instruction for the worker
-    worker_cli: Literal["claude", "codex"] = "claude"
+    # Provider choice is an authorization decision owned by the orchestrator,
+    # never by the planning model.  The legacy key stays in event payloads for
+    # compatibility, but every old/vendor value is normalized to this sentinel.
+    worker_cli: Literal["configured"] = "configured"
+    provider_binding: str = ""
+
+    @field_validator("worker_cli", mode="before")
+    @classmethod
+    def _ignore_legacy_worker_cli(cls, _value: object) -> str:
+        return "configured"
     # Empty string = "use whatever the worker's primary provider configures".
     # ClaudeDirectWorker overrides this with primary.model from
     # [brain.providers.claude-api]; CodexDirectWorker omits --model when
@@ -292,7 +301,7 @@ class MissionDecomposer:
                 Step(
                     slug=slug,
                     prompt=mission_prompt,
-                    worker_cli="claude",
+                    worker_cli="configured",
                     model="",  # let the worker pick its configured primary
                     needs_repo=needs_repo,
                 )
@@ -322,7 +331,7 @@ class MissionDecomposer:
             '  "steps": [\n'
             '    { "slug": "kebab-case-short", '
             '"prompt": "<full instructions for one worker>", '
-            '"worker_cli": "claude" | "codex", '
+            '"worker_cli": "configured", '
             '"model": "sonnet" | "opus" | "haiku", '
             '"allowed_tools": "Read,Edit,Write,Bash,Grep,Glob", '
             '"needs_repo": true | false }\n'
@@ -337,7 +346,8 @@ class MissionDecomposer:
             "Personal Jarvis source checkout.\n"
             "- Set needs_repo=false for research, connected-service actions, "
             "and standalone artifacts that do not use Personal Jarvis source.\n"
-            "- Default worker_cli is 'claude'; only use 'codex' for OpenAI-specific work.\n"
+            "- worker_cli MUST be 'configured'. Provider authorization is bound "
+            "by the orchestrator and cannot be selected by this plan.\n"
             "- Default model is 'sonnet'; use 'opus' only for reasoning-heavy steps."
         )
 

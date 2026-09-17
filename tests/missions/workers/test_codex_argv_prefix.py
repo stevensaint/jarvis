@@ -22,12 +22,37 @@ inherited-PATH dependency entirely.
 from __future__ import annotations
 
 import shutil
+from types import SimpleNamespace
 from pathlib import Path
 
 from jarvis.missions.workers.codex_direct_worker import (
     _build_codex_direct_cmd,
+    _codex_env_with_execution_host,
     _resolve_codex_argv_prefix,
 )
+
+
+def test_configured_native_binary_wins_over_path(tmp_path: Path, monkeypatch) -> None:
+    configured = tmp_path / "ChatGPT.app" / "Contents" / "Resources" / "codex"
+    configured.parent.mkdir(parents=True)
+    configured.write_text("", encoding="utf-8")
+    configured.chmod(0o755)
+    monkeypatch.setattr(
+        "jarvis.core.config.load_config",
+        lambda: SimpleNamespace(codex=SimpleNamespace(binary_path=str(configured))),
+    )
+    assert _resolve_codex_argv_prefix() == [str(configured)]
+
+
+def test_packaged_code_mode_host_is_added_to_child_path(tmp_path: Path) -> None:
+    resources = tmp_path / "ChatGPT.app" / "Contents" / "Resources"
+    resources.mkdir(parents=True)
+    codex = resources / "codex"
+    host = resources / "codex-code-mode-host"
+    codex.write_text("", encoding="utf-8")
+    host.write_text("", encoding="utf-8")
+    env = _codex_env_with_execution_host({"PATH": "/usr/bin"}, [str(codex)])
+    assert env["PATH"].split(":", 1)[0] == str(resources)
 
 
 def _fake_npm_layout(tmp_path: Path) -> tuple[Path, Path]:

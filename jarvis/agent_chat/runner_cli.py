@@ -811,6 +811,10 @@ def plan_codex(
     else:
         argv = [*base, "exec", "--json", "--cd", str(cwd)]
     argv += ["--skip-git-repo-check"]
+    # Coding-agent turns are task-contained. Do not inherit ambient plugins or
+    # computer-use tools that could expand a failed repository task into
+    # Terminal/Cursor/browser automation.
+    argv += ["--ignore-user-config"]
     # Jarvis' own tools over streamable-HTTP MCP, mounted for this run only —
     # the person's ~/.codex/config.toml is never touched.
     argv += jarvis_harness.codex_config_args(identity.session_id if identity else None)
@@ -851,7 +855,11 @@ def plan_codex(
         argv += ["--model", model]
     argv += ["-"]  # prompt on stdin
     text = _PLAN_PREAMBLE + prompt if mode == "plan" else prompt
-    return CliPlan(argv, jarvis_harness.apply_env(_account_env("codex")), text, "codex", resume)
+    env = jarvis_harness.apply_env(_account_env("codex"))
+    from jarvis.missions.workers.codex_direct_worker import _codex_env_with_execution_host
+
+    env = _codex_env_with_execution_host(env, base)
+    return CliPlan(argv, env, text, "codex", resume)
 
 
 _OPENCODE_CATALOG: dict[str, Any] = {"at": 0.0, "rows": None}
