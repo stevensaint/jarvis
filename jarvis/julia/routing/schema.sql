@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS julia_workers (
     provider TEXT NOT NULL,
     model TEXT NOT NULL,
     worker_class TEXT NOT NULL,
+    node_id TEXT,
     authorization_state TEXT NOT NULL CHECK (
         authorization_state IN ('AUTHORIZED', 'UNAUTHORIZED', 'DISABLED')
     ),

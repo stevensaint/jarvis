@@ -701,6 +701,7 @@ ProviderBindingFn = Callable[[], str | None]
 ProviderAuthorizationFn = Callable[[], tuple[str, ...]]
 WorkerFailureFn = Callable[[Step, str | None, str, bool], None]
 WorkerOutcomeFn = Callable[[Step, str, int, float, int], None]
+ExecutionStartFn = Callable[[Step, int], None]
 EnvBuilderFn = Callable[[Path], dict[str, str]]
 JobFactoryFn = Callable[[], Any]  # () -> WindowsJobObject (async context manager)
 
@@ -768,6 +769,7 @@ class Kontrollierer:
         provider_authorization: ProviderAuthorizationFn | None = None,
         worker_failure_handler: WorkerFailureFn | None = None,
         worker_outcome_handler: WorkerOutcomeFn | None = None,
+        execution_start_handler: ExecutionStartFn | None = None,
         max_workers: int = MAX_WORKERS_PER_MISSION,
         # Cross-mission concurrency cap (2026-05-24): the worker AND the critic
         # both shell out to `claude` over the same Claude Max OAuth. When the
@@ -808,6 +810,7 @@ class Kontrollierer:
         self._provider_authorization = provider_authorization
         self._worker_failure_handler = worker_failure_handler
         self._worker_outcome_handler = worker_outcome_handler
+        self._execution_start_handler = execution_start_handler
         self._job_factory = job_factory
         self._isolation_root = isolation_root
         self._max_workers = max(1, min(max_workers, MAX_WORKERS_PER_MISSION))
@@ -1405,6 +1408,8 @@ class Kontrollierer:
 
             # Worker spawn (real or fake depending on the factory)
             worker = self._worker_factory(step)
+            if self._execution_start_handler is not None:
+                self._execution_start_handler(step, iteration)
             log_dir = mission_dir / "tasks" / step.task_id[:13] / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
 

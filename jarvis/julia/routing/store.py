@@ -31,6 +31,11 @@ class WorkerRoutingStore:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
+            columns = {
+                str(row[1]) for row in conn.execute("PRAGMA table_info(julia_workers)")
+            }
+            if "node_id" not in columns:
+                conn.execute("ALTER TABLE julia_workers ADD COLUMN node_id TEXT")
             self._conn = conn
 
     def close(self) -> None:
@@ -53,13 +58,15 @@ class WorkerRoutingStore:
                 """
                 INSERT INTO julia_workers (
                     worker_id, provider, model, worker_class,
+                    node_id,
                     authorization_state, availability_state, privacy_class,
                     descriptor_json, updated_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(worker_id) DO UPDATE SET
                     provider=excluded.provider,
                     model=excluded.model,
                     worker_class=excluded.worker_class,
+                    node_id=excluded.node_id,
                     authorization_state=excluded.authorization_state,
                     availability_state=excluded.availability_state,
                     privacy_class=excluded.privacy_class,
@@ -71,6 +78,7 @@ class WorkerRoutingStore:
                     worker.provider,
                     worker.model,
                     worker.worker_class,
+                    worker.node_id,
                     worker.authorization_state.value,
                     worker.availability.state.value,
                     worker.privacy_class.value,

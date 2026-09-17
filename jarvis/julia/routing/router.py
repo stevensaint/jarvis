@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from uuid import uuid4
+from typing import TYPE_CHECKING
+
+from jarvis.julia.runtime.contracts import ELIGIBLE_NODE_STATES
 
 from .contracts import (
     CandidateEvaluation,
@@ -14,6 +17,9 @@ from .contracts import (
     WorkerDescriptor,
 )
 from .registry import WorkerRegistry
+
+if TYPE_CHECKING:
+    from jarvis.julia.runtime.nodes import NodeRegistry
 
 
 class NoEligibleWorkerError(RuntimeError):
@@ -119,16 +125,50 @@ class DynamicWorkerRouter:
         *,
         policy: RoutingPolicy | None = None,
         store: object | None = None,
+        node_registry: NodeRegistry | None = None,
     ) -> None:
         self.registry = registry
         self.policy = policy or RoutingPolicy()
         self.store = store
+        self.node_registry = node_registry
+
+    def _node_rejection_reasons(
+        self,
+        worker: WorkerDescriptor,
+        task: TaskProfile,
+    ) -> tuple[str, ...]:
+        if worker.node_id is None:
+            return ()
+        reasons: list[str] = []
+        if worker.node_id not in task.authorization.authorized_node_ids:
+            reasons.append("node_not_authorized")
+        if self.node_registry is None:
+            reasons.append("node_registry_unavailable")
+            return tuple(reasons)
+        node = self.node_registry.get(worker.node_id)
+        if node is None:
+            reasons.append("node_unknown")
+            return tuple(reasons)
+        if node.availability_state not in ELIGIBLE_NODE_STATES:
+            reasons.append(f"node_availability:{node.availability_state.value}")
+        missing_caps = sorted(task.required_capabilities - node.capabilities)
+        if missing_caps:
+            reasons.append("node_missing_capabilities:" + ",".join(missing_caps))
+        missing_tools = sorted(task.required_tools - node.tools)
+        if missing_tools:
+            reasons.append("node_missing_tools:" + ",".join(missing_tools))
+        missing_modes = sorted(task.required_execution_modes - node.execution_modes)
+        if missing_modes:
+            reasons.append("node_execution_scope:" + ",".join(missing_modes))
+        return tuple(reasons)
 
     def route(self, task: TaskProfile, *, require_selection: bool = True) -> RoutingDecision:
         evaluations: list[CandidateEvaluation] = []
         eligible: list[tuple[float, WorkerDescriptor, dict[str, float]]] = []
         for worker in self.registry.snapshot():
-            reasons = evaluate_eligibility(worker, task)
+            reasons = self._node_rejection_reasons(worker, task) + evaluate_eligibility(
+                worker, task
+            )
             if reasons:
                 evaluations.append(
                     CandidateEvaluation(
@@ -169,6 +209,7 @@ class DynamicWorkerRouter:
             selected_worker_id=selected.worker_id if selected else None,
             selected_provider=selected.provider if selected else None,
             selected_model=selected.model if selected else None,
+            selected_node_id=selected.node_id if selected else None,
             reason=reason,
         )
         saver = getattr(self.store, "save_decision", None)

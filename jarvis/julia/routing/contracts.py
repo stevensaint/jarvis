@@ -97,6 +97,7 @@ class WorkerDescriptor(_FrozenModel):
     provider: str = Field(min_length=1)
     model: str = ""
     worker_class: str = Field(min_length=1)
+    node_id: str | None = None
     capabilities: frozenset[str] = frozenset()
     tools: frozenset[str] = frozenset()
     execution_modes: frozenset[str] = frozenset()
@@ -132,6 +133,7 @@ class AuthorizationContract(_FrozenModel):
 
     authorized_worker_ids: frozenset[str] = frozenset()
     authorized_providers: frozenset[str] = frozenset()
+    authorized_node_ids: frozenset[str] = frozenset()
     allowed_tools: frozenset[str] = frozenset()
     allowed_execution_modes: frozenset[str] = frozenset()
     allowed_privacy_classes: frozenset[PrivacyClass] = frozenset()
@@ -190,6 +192,7 @@ class RoutingDecision(_FrozenModel):
     selected_worker_id: str | None
     selected_provider: str | None
     selected_model: str | None
+    selected_node_id: str | None = None
     created_at_ms: int = Field(default_factory=lambda: time.time_ns() // 1_000_000)
     reason: str
 

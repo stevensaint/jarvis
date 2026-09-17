@@ -489,6 +489,7 @@ jarvis-review-eval = "jarvis.cli.review_eval:main"
 # jarvisctl — control CLI for a running Personal Jarvis instance.
 jarvisctl = "jarvis.cli_ctl.__main__:main"
 jctl = "jarvis.cli_ctl.__main__:main"
+julia-runtime = "jarvis.julia.runtime.cli:main"
 
 # Plugin entry points — all slots are already declared.
 # New plugins are discovered without any core changes.

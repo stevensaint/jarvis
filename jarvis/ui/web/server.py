@@ -364,6 +364,7 @@ class WebServer:
         from .friends_routes import router as friends_router
         from .frontier_routes import router as frontier_router
         from .grok_build_routes import router as grok_build_router
+        from .julia_runtime_routes import router as julia_runtime_router
         from .local_models_assistant_routes import (
             router as local_models_assistant_router,
         )
@@ -598,6 +599,7 @@ class WebServer:
         app.include_router(missions_router)
         app.include_router(missions_ws_router)
         app.include_router(missions_pty_router)
+        app.include_router(julia_runtime_router)
         # Computer-Use run control (deep-dive 2026-07-15, H-09): start/list/
         # inspect/cancel desktop goals — auto-exposed as `jarvis api
         # computer-use <op>` by the dynamic CLI layer.
@@ -2995,6 +2997,10 @@ class WebServer:
         self.app.state.worker_registry = result["worker_registry"]
         self.app.state.worker_router = result["worker_router"]
         self.app.state.worker_routing_store = result["worker_routing_store"]
+        self.app.state.julia_runtime_store = result["julia_runtime_store"]
+        self.app.state.julia_node_registry = result["julia_node_registry"]
+        self.app.state.julia_runtime_paths = result["julia_runtime_paths"]
+        self.app.state.julia_execution_recovery = result["julia_execution_recovery"]
         # Mission-Bus -> global-bus bridge that re-publishes terminal missions
         # as MissionCompleted so the Tasks scheduler can drive When-Then rules.
         self.app.state.mission_event_bridge = result["mission_event_bridge"]

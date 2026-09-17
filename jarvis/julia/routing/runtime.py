@@ -85,11 +85,13 @@ def authorization_for_step(
     providers: tuple[str, ...],
     *,
     needs_repository: bool,
+    node_ids: tuple[str, ...] = (),
 ) -> AuthorizationContract:
     tools = {"filesystem", "shell"} if needs_repository else set()
     modes = {"repository"} if needs_repository else set()
     return AuthorizationContract(
         authorized_providers=frozenset(providers),
+        authorized_node_ids=frozenset(node_ids),
         allowed_tools=frozenset(tools),
         allowed_execution_modes=frozenset(modes),
         allowed_privacy_classes=frozenset(
@@ -182,6 +184,7 @@ def descriptor_from_spec(
     *,
     cfg: Any,
     availability: AvailabilityRecord | None = None,
+    node_id: str | None = None,
 ) -> WorkerDescriptor:
     capabilities = {
         "reasoning",
@@ -199,6 +202,7 @@ def descriptor_from_spec(
         provider=spec.provider,
         model=_configured_model(cfg, spec),
         worker_class=spec.worker_class,
+        node_id=node_id,
         capabilities=frozenset(capabilities),
         tools=frozenset({"filesystem", "shell"}),
         execution_modes=frozenset({"repository"}),
@@ -214,9 +218,17 @@ def descriptor_from_spec(
     )
 
 
-def populate_runtime_registry(registry: WorkerRegistry, cfg: Any) -> None:
+def populate_runtime_registry(
+    registry: WorkerRegistry,
+    cfg: Any,
+    *,
+    node_id: str | None = None,
+) -> None:
     registry.register_many(
-        tuple(descriptor_from_spec(spec, cfg=cfg) for spec in DEFAULT_WORKER_ADAPTERS)
+        tuple(
+            descriptor_from_spec(spec, cfg=cfg, node_id=node_id)
+            for spec in DEFAULT_WORKER_ADAPTERS
+        )
     )
 
 

@@ -47,3 +47,15 @@ export interface CandidateEvaluation {
   score: number | null
   score_components: Record<string, number>
 }
+
+export const NODE_AVAILABILITY_STATES = [
+  'ONLINE',
+  'DEGRADED',
+  'BUSY',
+  'PAUSED',
+  'DRAINING',
+  'OFFLINE',
+  'UNKNOWN',
+] as const
+
+export type NodeAvailabilityState = (typeof NODE_AVAILABILITY_STATES)[number]

@@ -1019,10 +1019,51 @@ async def bootstrap_missions(
         from jarvis.core.config import load_config
 
         runtime_cfg = load_config()
-    routing_store = WorkerRoutingStore(db_path.with_name("julia_worker_routing.db"))
+    from jarvis import __version__
+    from jarvis.julia.runtime import (
+        ExecutionRecoveryManager,
+        JuliaRuntimeStore,
+        NodeAvailability,
+        NodeRegistry,
+        RuntimePaths,
+        RuntimeState,
+        load_or_create_node_identity,
+        local_node_descriptor,
+    )
+
+    runtime_paths = RuntimePaths.from_data_root(db_path.parent)
+    runtime_paths.ensure()
+    runtime_store = JuliaRuntimeStore(runtime_paths.runtime_db)
+    runtime_store.open()
+    node_registry = NodeRegistry(runtime_store)
+    local_node_id = load_or_create_node_identity(runtime_paths.identity_file)
+    runtime_snapshot = runtime_store.runtime_snapshot()
+    if runtime_snapshot.detail == "runtime has not started":
+        node_availability = NodeAvailability.ONLINE
+    elif runtime_snapshot.state is RuntimeState.PAUSED:
+        node_availability = NodeAvailability.PAUSED
+    elif runtime_snapshot.state in {RuntimeState.STOPPING, RuntimeState.STOPPED}:
+        node_availability = NodeAvailability.OFFLINE
+    elif runtime_snapshot.state is RuntimeState.FAILED:
+        node_availability = NodeAvailability.DEGRADED
+    else:
+        node_availability = NodeAvailability.ONLINE
+    node_registry.register(
+        local_node_descriptor(
+            node_id=local_node_id,
+            runtime_version=__version__,
+            is_primary=True,
+            availability=node_availability,
+            started_at_ms=runtime_snapshot.started_at_ms,
+            storage_scope=frozenset({str(runtime_paths.core_root)}),
+        )
+    )
+    execution_recovery = ExecutionRecoveryManager(runtime_store)
+
+    routing_store = WorkerRoutingStore(runtime_paths.routing_db)
     routing_store.open()
     worker_registry = WorkerRegistry(store=routing_store)
-    populate_runtime_registry(worker_registry, runtime_cfg)
+    populate_runtime_registry(worker_registry, runtime_cfg, node_id=local_node_id)
     policy_cfg = getattr(getattr(runtime_cfg, "phase6", None), "routing", None)
     routing_policy = RoutingPolicy(
         **(policy_cfg.model_dump() if policy_cfg is not None else {})
@@ -1031,9 +1072,12 @@ async def bootstrap_missions(
         worker_registry,
         policy=routing_policy,
         store=routing_store,
+        node_registry=node_registry,
     )
     routing_selection_by_task: dict[str, str] = {}
     routing_category_by_task: dict[str, str] = {}
+    execution_attempt_by_task: dict[str, str] = {}
+    routing_profile_by_task: dict[str, Any] = {}
 
     def _authorized_provider_bindings() -> tuple[str, ...]:
         try:
@@ -1162,6 +1206,7 @@ async def bootstrap_missions(
         authorization = authorization_for_step(
             authorized_providers,
             needs_repository=bool(getattr(step, "needs_repo", True)),
+            node_ids=(local_node_id,),
         )
         task_profile = profile_task(
             objective_id=str(getattr(step, "objective_id", "") or step.task_id),
@@ -1175,6 +1220,7 @@ async def bootstrap_missions(
         if routing_decision.selected_worker_id is not None:
             routing_selection_by_task[str(step.task_id)] = routing_decision.selected_worker_id
             routing_category_by_task[str(step.task_id)] = routing_decision.task_category
+            routing_profile_by_task[str(step.task_id)] = task_profile
         # Worker routing post-Welle-4:
         #
         # 1. If ``[brain.sub_jarvis].provider`` is set in jarvis.toml,
@@ -1375,6 +1421,28 @@ async def bootstrap_missions(
             return cross
         return ClaudeDirectWorker(capability_inventory=capability_inventory)
 
+    def _record_execution_start(step, iteration: int) -> None:  # noqa: ANN001
+        task_id = str(step.task_id)
+        worker_id = routing_selection_by_task.get(task_id)
+        worker = worker_registry.get(worker_id) if worker_id is not None else None
+        profile = routing_profile_by_task.get(task_id)
+        if worker is None or profile is None:
+            raise RuntimeError("worker execution cannot start without a routing decision")
+        attempt = execution_recovery.begin(
+            idempotency_key=(
+                f"{profile.objective_id}:{profile.task_id}:iteration-{iteration}"
+            ),
+            objective_id=profile.objective_id,
+            task_id=profile.task_id,
+            iteration=iteration,
+            authorization=profile.authorization.model_dump(mode="json"),
+            node_id=worker.node_id,
+            worker_id=worker.worker_id,
+            resumable=bool(getattr(step, "needs_repo", True)),
+            retry_safe=False,
+        )
+        execution_attempt_by_task[task_id] = attempt.attempt_id
+
     def _record_worker_failure(  # noqa: ANN202
         step,
         error_class: str | None,
@@ -1404,6 +1472,16 @@ async def bootstrap_missions(
             worker_id,
             FailureRecord(failure_type=failure_type, reason=error_detail),
         )
+        attempt_id = execution_attempt_by_task.get(str(step.task_id))
+        if attempt_id is not None:
+            from jarvis.julia.runtime import ExecutionState, SideEffectState
+
+            execution_recovery.checkpoint(
+                attempt_id,
+                state=ExecutionState.INTERRUPTED,
+                side_effect_state=SideEffectState.UNKNOWN,
+                detail=error_detail,
+            )
 
     def _record_worker_outcome(  # noqa: ANN202
         step,
@@ -1437,8 +1515,22 @@ async def bootstrap_missions(
                 final_status="success" if succeeded else "failed",
             )
         )
+        attempt_id = execution_attempt_by_task.get(str(step.task_id))
+        if attempt_id is not None:
+            from jarvis.julia.runtime import ExecutionState, SideEffectState
+
+            execution_recovery.checkpoint(
+                attempt_id,
+                state=ExecutionState.SUCCEEDED if succeeded else ExecutionState.FAILED,
+                side_effect_state=(
+                    SideEffectState.COMMITTED if succeeded else SideEffectState.UNKNOWN
+                ),
+                detail=outcome,
+            )
         routing_selection_by_task.pop(str(step.task_id), None)
         routing_category_by_task.pop(str(step.task_id), None)
+        routing_profile_by_task.pop(str(step.task_id), None)
+        execution_attempt_by_task.pop(str(step.task_id), None)
 
     kontrollierer = Kontrollierer(
         manager=manager,
@@ -1454,6 +1546,7 @@ async def bootstrap_missions(
         provider_authorization=_authorized_provider_bindings,
         worker_failure_handler=_record_worker_failure,
         worker_outcome_handler=_record_worker_outcome,
+        execution_start_handler=_record_execution_start,
         max_workers=max_workers,
         safety_enabled=safety_enabled,
         extra_blocked_globs=extra_blocked_globs,
@@ -1563,6 +1656,10 @@ async def bootstrap_missions(
         "worker_registry": worker_registry,
         "worker_router": worker_router,
         "worker_routing_store": routing_store,
+        "julia_runtime_store": runtime_store,
+        "julia_node_registry": node_registry,
+        "julia_runtime_paths": runtime_paths,
+        "julia_execution_recovery": execution_recovery,
     }
 
 
@@ -1594,6 +1691,10 @@ async def shutdown_missions(bootstrap_result: dict[str, Any]) -> None:
     routing_store = bootstrap_result.get("worker_routing_store")
     if routing_store is not None:
         routing_store.close()
+
+    runtime_store = bootstrap_result.get("julia_runtime_store")
+    if runtime_store is not None:
+        runtime_store.close()
 
 
 __all__ = ["bootstrap_missions", "shutdown_missions"]
