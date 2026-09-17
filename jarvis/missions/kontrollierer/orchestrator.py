@@ -698,6 +698,9 @@ def _worker_progress_note(ev: Any) -> str | None:
 # Type aliases
 WorkerFactoryFn = Callable[[Step], WorkerProtocol]
 ProviderBindingFn = Callable[[], str | None]
+ProviderAuthorizationFn = Callable[[], tuple[str, ...]]
+WorkerFailureFn = Callable[[Step, str | None, str, bool], None]
+WorkerOutcomeFn = Callable[[Step, str, int, float, int], None]
 EnvBuilderFn = Callable[[Path], dict[str, str]]
 JobFactoryFn = Callable[[], Any]  # () -> WindowsJobObject (async context manager)
 
@@ -762,6 +765,9 @@ class Kontrollierer:
         job_factory: JobFactoryFn,
         isolation_root: Path,
         provider_binding: ProviderBindingFn | None = None,
+        provider_authorization: ProviderAuthorizationFn | None = None,
+        worker_failure_handler: WorkerFailureFn | None = None,
+        worker_outcome_handler: WorkerOutcomeFn | None = None,
         max_workers: int = MAX_WORKERS_PER_MISSION,
         # Cross-mission concurrency cap (2026-05-24): the worker AND the critic
         # both shell out to `claude` over the same Claude Max OAuth. When the
@@ -799,6 +805,9 @@ class Kontrollierer:
         self._budget = budget
         self._worker_factory = worker_factory
         self._provider_binding = provider_binding
+        self._provider_authorization = provider_authorization
+        self._worker_failure_handler = worker_failure_handler
+        self._worker_outcome_handler = worker_outcome_handler
         self._job_factory = job_factory
         self._isolation_root = isolation_root
         self._max_workers = max(1, min(max_workers, MAX_WORKERS_PER_MISSION))
@@ -839,6 +848,8 @@ class Kontrollierer:
         # In-flight run_mission tasks by mission_id — lets an external
         # cancel (UI hold-to-abort) abort a running mission mid-flight.
         self._running_missions: dict[str, asyncio.Task[Any]] = {}
+        self._task_costs: dict[str, float] = {}
+        self._task_attempts: dict[str, int] = {}
 
     async def run_mission(self, mission_id: str) -> MissionState:
         """Runs a mission end-to-end and returns the final state.
@@ -998,10 +1009,21 @@ class Kontrollierer:
         if self._provider_binding is not None:
             resolved_provider = (self._provider_binding() or "").strip().lower()
             if resolved_provider:
+                authorized = (
+                    self._provider_authorization()
+                    if self._provider_authorization is not None
+                    else (resolved_provider,)
+                )
                 plan = plan.model_copy(
                     update={
                         "steps": [
-                            step.model_copy(update={"provider_binding": resolved_provider})
+                            step.model_copy(
+                                update={
+                                    "provider_binding": resolved_provider,
+                                    "authorized_providers": authorized,
+                                    "objective_id": mission_id,
+                                }
+                            )
                             for step in plan.steps
                         ]
                     }
@@ -1236,7 +1258,8 @@ class Kontrollierer:
                 )
 
             try:
-                return await self._run_iterations(
+                task_started = time.monotonic()
+                outcome = await self._run_iterations(
                     mission_id=mission_id,
                     mission_prompt=mission_prompt,
                     step=step,
@@ -1244,6 +1267,21 @@ class Kontrollierer:
                     worktree=worktree,
                     reflections=reflections,
                 )
+                if self._worker_outcome_handler is not None:
+                    try:
+                        self._worker_outcome_handler(
+                            step,
+                            outcome,
+                            int((time.monotonic() - task_started) * 1_000),
+                            self._task_costs.get(step.task_id, 0.0),
+                            self._task_attempts.get(step.task_id, 1),
+                        )
+                    except Exception:  # noqa: BLE001 - telemetry is non-fatal
+                        logger.exception(
+                            "Task %s: Julia outcome persistence failed",
+                            step.task_id,
+                        )
+                return outcome
             finally:
                 # Persist worker artifacts BEFORE the worktree teardown.
                 # Without this step the worktree (and everything the agent
@@ -1269,6 +1307,8 @@ class Kontrollierer:
                     logger.warning(
                         "worktree cleanup failed for %s", worktree, exc_info=True
                     )
+                self._task_costs.pop(step.task_id, None)
+                self._task_attempts.pop(step.task_id, None)
 
     async def _run_iterations(
         self,
@@ -1441,6 +1481,10 @@ class Kontrollierer:
             )
             if spawn_result.session_id:
                 session_id = spawn_result.session_id
+            self._task_costs[step.task_id] = (
+                self._task_costs.get(step.task_id, 0.0) + spawn_result.cost_usd
+            )
+            self._task_attempts[step.task_id] = iteration + 1
 
             # Fail-fast on terminal worker errors (billing, auth, etc.). The
             # Critic cannot review work that never happened; iterating 3
@@ -1513,6 +1557,19 @@ class Kontrollierer:
                     timed_out=spawn_result.worker_timed_out,
                 )
                 error_detail = spawn_result.worker_error[:300]
+                if self._worker_failure_handler is not None:
+                    try:
+                        self._worker_failure_handler(
+                            step,
+                            error_class,
+                            error_detail,
+                            spawn_result.worker_timed_out,
+                        )
+                    except Exception:  # noqa: BLE001 - telemetry must not break recovery
+                        logger.exception(
+                            "Task %s: Julia worker failure persistence failed",
+                            step.task_id,
+                        )
                 # Record the classified failure for the terminal MissionFailed
                 # event. Last write wins: the final iteration's cause is the
                 # one the mission actually died of.

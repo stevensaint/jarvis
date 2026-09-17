@@ -11,6 +11,8 @@ from .contracts import (
     AvailabilityState,
     FailureRecord,
     FailureType,
+    HistoricalMetrics,
+    OutcomeRecord,
     WorkerDescriptor,
 )
 
@@ -117,5 +119,33 @@ class WorkerRegistry:
             )
             self._workers[worker_id] = updated
             if self._store is not None:
+                self._store.upsert_worker(updated)
+            return updated
+
+    def record_outcome(self, outcome: OutcomeRecord) -> WorkerDescriptor:
+        with self._lock:
+            current = self._workers[outcome.worker_id]
+            old = current.historical_metrics
+            attempts = old.attempts + 1
+            succeeded = outcome.final_status == "success"
+            metrics = HistoricalMetrics(
+                attempts=attempts,
+                successes=old.successes + int(succeeded),
+                critic_acceptances=old.critic_acceptances
+                + int(outcome.critic_result == "approve"),
+                human_corrections=old.human_corrections + int(outcome.human_correction),
+                average_cost_usd=(
+                    old.average_cost_usd * old.attempts + outcome.actual_cost_usd
+                )
+                / attempts,
+                average_latency_ms=(
+                    old.average_latency_ms * old.attempts + outcome.duration_ms
+                )
+                / attempts,
+            )
+            updated = current.model_copy(update={"historical_metrics": metrics})
+            self._workers[outcome.worker_id] = updated
+            if self._store is not None:
+                self._store.record_outcome(outcome)
                 self._store.upsert_worker(updated)
             return updated

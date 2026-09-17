@@ -274,8 +274,10 @@ def test_j_explainability_roundtrips_from_store(tmp_path: Path) -> None:
 def test_k_outcomes_produce_empirical_aggregates(tmp_path: Path) -> None:
     store = WorkerRoutingStore(tmp_path / "routing.db")
     store.open()
+    registry = WorkerRegistry(store=store)
+    registry.register(_worker("worker", "provider-a"))
     for status, correction in (("success", False), ("failed", True)):
-        store.record_outcome(
+        registry.record_outcome(
             OutcomeRecord(
                 objective_id="objective-1",
                 task_id=f"task-{status}",
@@ -297,6 +299,10 @@ def test_k_outcomes_produce_empirical_aggregates(tmp_path: Path) -> None:
     assert metric["success_rate"] == 0.5
     assert metric["critic_acceptance_rate"] == 0.5
     assert metric["human_correction_rate"] == 0.5
+    worker = registry.get("worker")
+    assert worker is not None
+    assert worker.historical_metrics.attempts == 2
+    assert worker.historical_metrics.success_rate == 0.5
 
 
 def test_l_local_worker_routes_simple_control_task_and_escalates_unsuitable() -> None:

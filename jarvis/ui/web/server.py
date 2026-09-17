@@ -2992,6 +2992,9 @@ class WebServer:
         self.app.state.kontrollierer = result["kontrollierer"]
         self.app.state.missions_budget = result["budget"]
         self.app.state.mission_announcer = result["mission_announcer"]
+        self.app.state.worker_registry = result["worker_registry"]
+        self.app.state.worker_router = result["worker_router"]
+        self.app.state.worker_routing_store = result["worker_routing_store"]
         # Mission-Bus -> global-bus bridge that re-publishes terminal missions
         # as MissionCompleted so the Tasks scheduler can drive When-Then rules.
         self.app.state.mission_event_bridge = result["mission_event_bridge"]

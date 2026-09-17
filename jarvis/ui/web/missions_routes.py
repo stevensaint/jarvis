@@ -87,6 +87,14 @@ def _require_tool_approvals(request: Request) -> MissionToolApprovalCoordinator:
     return coordinator
 
 
+def _require_worker_routing(request: Request) -> tuple[Any, Any]:
+    registry = getattr(request.app.state, "worker_registry", None)
+    store = getattr(request.app.state, "worker_routing_store", None)
+    if registry is None or store is None:
+        raise HTTPException(status_code=503, detail="Julia worker routing is not available")
+    return registry, store
+
+
 def _mission_outputs_root(request: Request) -> Path:
     """Return the configured persistent Jarvis-Agent output directory."""
     configured = getattr(request.app.state, "outputs_root", None)
@@ -139,6 +147,33 @@ class DenyToolApprovalBody(BaseModel):
 
 
 _VALID_STATES: frozenset[str] = frozenset(s.value for s in MissionState)
+
+
+@router.get("/routing/workers")
+async def list_routing_workers(request: Request) -> dict[str, Any]:
+    """Secret-free registry snapshot with current eligibility inputs."""
+    registry, _store = _require_worker_routing(request)
+    return {
+        "workers": [worker.model_dump(mode="json") for worker in registry.snapshot()]
+    }
+
+
+@router.get("/routing/decisions/{objective_id}")
+async def list_routing_decisions(objective_id: str, request: Request) -> dict[str, Any]:
+    """Persisted gates, scores, selection, and rejection explanations."""
+    _registry, store = _require_worker_routing(request)
+    decisions = store.decisions_for_objective(objective_id)
+    return {
+        "objective_id": objective_id,
+        "decisions": [decision.model_dump(mode="json") for decision in decisions],
+    }
+
+
+@router.get("/routing/metrics")
+async def get_routing_metrics(request: Request) -> dict[str, Any]:
+    """Empirical worker/task aggregates; policy remains operator-controlled."""
+    _registry, store = _require_worker_routing(request)
+    return {"metrics": store.aggregate_metrics()}
 
 
 @router.get("")

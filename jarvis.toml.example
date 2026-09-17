@@ -236,3 +236,17 @@ auto_approve_tool_families = [
   "wiki-ingest",
   "session-latest-turn",
 ]
+
+# -- Julia worker routing utility policy --
+# These weights rank workers only after every authorization and eligibility
+# gate passes. Lowering a gate is not configurable here.
+[phase6.routing]
+quality_weight = 0.34
+success_weight = 0.24
+cost_weight = 0.12
+latency_weight = 0.10
+reliability_weight = 0.10
+context_weight = 0.05
+risk_weight = 0.05
+reference_cost_usd = 1.0
+reference_latency_ms = 60000.0

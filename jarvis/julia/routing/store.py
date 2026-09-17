@@ -117,6 +117,17 @@ class WorkerRoutingStore:
             ).fetchall()
         return tuple(RoutingDecision.model_validate_json(str(row[0])) for row in rows)
 
+    def decisions_for_objective(self, objective_id: str) -> tuple[RoutingDecision, ...]:
+        with self._lock:
+            rows = self.conn.execute(
+                """
+                SELECT decision_json FROM julia_routing_decisions
+                WHERE objective_id = ? ORDER BY created_at_ms, rowid
+                """,
+                (objective_id,),
+            ).fetchall()
+        return tuple(RoutingDecision.model_validate_json(str(row[0])) for row in rows)
+
     def record_outcome(self, outcome: OutcomeRecord) -> None:
         with self._lock, self.conn:
             self.conn.execute(

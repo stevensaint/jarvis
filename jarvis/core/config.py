@@ -4136,6 +4136,27 @@ class Phase6SafetyConfig(BaseModel):
     )
 
 
+class Phase6RoutingConfig(BaseModel):
+    """``[phase6.routing]`` — Julia worker-utility policy weights.
+
+    Hard eligibility gates are not configurable: authority, availability,
+    capability, tool, privacy, scope, and minimum quality always run first.
+    These weights only rank workers that survived every gate.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    quality_weight: float = Field(default=0.34, ge=0.0)
+    success_weight: float = Field(default=0.24, ge=0.0)
+    cost_weight: float = Field(default=0.12, ge=0.0)
+    latency_weight: float = Field(default=0.10, ge=0.0)
+    reliability_weight: float = Field(default=0.10, ge=0.0)
+    context_weight: float = Field(default=0.05, ge=0.0)
+    risk_weight: float = Field(default=0.05, ge=0.0)
+    reference_cost_usd: float = Field(default=1.0, gt=0.0)
+    reference_latency_ms: float = Field(default=60_000.0, gt=0.0)
+
+
 class Phase6Config(BaseModel):
     """``[phase6]`` root — mission subsystem configuration.
 
@@ -4147,6 +4168,7 @@ class Phase6Config(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     safety: Phase6SafetyConfig = Field(default_factory=Phase6SafetyConfig)
+    routing: Phase6RoutingConfig = Field(default_factory=Phase6RoutingConfig)
 
 
 class GlmCodingPlanConfig(BaseModel):

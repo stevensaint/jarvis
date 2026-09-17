@@ -967,10 +967,12 @@ async def bootstrap_missions(
     brain_primary = "gemini"
     brain_deep_model = "sonnet"
     sub_jarvis_provider: str | None = None
+    runtime_cfg: Any | None = None
     try:
         from jarvis.core.config import load_config
 
         cfg = load_config()
+        runtime_cfg = cfg
         brain_primary = (cfg.brain.primary or "claude-api").lower()
         # deep_model is the per-provider field; resolve via providers map.
         provider_cfg = (cfg.brain.providers or {}).get(brain_primary)
@@ -1000,6 +1002,46 @@ async def bootstrap_missions(
     # _live_subagent_provider all agree (and never silently route to the Claude CLI).
     if not sub_jarvis_provider:
         sub_jarvis_provider = brain_primary
+
+    # Julia Sprint 1: one provider-neutral registry and durable routing ledger.
+    # The accepted worker implementations remain unchanged behind this seam.
+    from jarvis.julia.routing import DynamicWorkerRouter, RoutingPolicy, WorkerRegistry
+    from jarvis.julia.routing.profiler import profile_task
+    from jarvis.julia.routing.runtime import (
+        authorization_for_step,
+        configured_authorized_providers,
+        populate_runtime_registry,
+        refresh_runtime_availability,
+    )
+    from jarvis.julia.routing.store import WorkerRoutingStore
+
+    if runtime_cfg is None:
+        from jarvis.core.config import load_config
+
+        runtime_cfg = load_config()
+    routing_store = WorkerRoutingStore(db_path.with_name("julia_worker_routing.db"))
+    routing_store.open()
+    worker_registry = WorkerRegistry(store=routing_store)
+    populate_runtime_registry(worker_registry, runtime_cfg)
+    policy_cfg = getattr(getattr(runtime_cfg, "phase6", None), "routing", None)
+    routing_policy = RoutingPolicy(
+        **(policy_cfg.model_dump() if policy_cfg is not None else {})
+    )
+    worker_router = DynamicWorkerRouter(
+        worker_registry,
+        policy=routing_policy,
+        store=routing_store,
+    )
+    routing_selection_by_task: dict[str, str] = {}
+    routing_category_by_task: dict[str, str] = {}
+
+    def _authorized_provider_bindings() -> tuple[str, ...]:
+        try:
+            live_cfg = load_config()
+            primary = _live_subagent_provider(sub_jarvis_provider)
+            return configured_authorized_providers(live_cfg, primary)
+        except Exception:  # noqa: BLE001 - preserve the boot authorization snapshot
+            return configured_authorized_providers(runtime_cfg, sub_jarvis_provider)
 
     # 7. Kontrollierer
     def _env_builder(mission_dir: Path) -> dict[str, str]:
@@ -1109,6 +1151,30 @@ async def bootstrap_missions(
     def _worker_factory(step):  # noqa: ANN001 - Step type local
         task_text = getattr(step, "prompt", "") or ""
         capability_inventory = _assemble_worker_capability_inventory(task_text)
+        # Select for every delegation attempt against current local health.
+        # Refreshing may remove failed candidates; authority remains the
+        # immutable tuple captured before MissionPlanReady was published.
+        refresh_runtime_availability(worker_registry)
+        authorized_providers = tuple(getattr(step, "authorized_providers", ()) or ())
+        if not authorized_providers:
+            bound = (getattr(step, "provider_binding", "") or "").strip().lower()
+            authorized_providers = (bound,) if bound else _authorized_provider_bindings()
+        authorization = authorization_for_step(
+            authorized_providers,
+            needs_repository=bool(getattr(step, "needs_repo", True)),
+        )
+        task_profile = profile_task(
+            objective_id=str(getattr(step, "objective_id", "") or step.task_id),
+            task_id=str(step.task_id),
+            objective=task_text,
+            authorization=authorization,
+            needs_repository=bool(getattr(step, "needs_repo", True)),
+            minimum_quality=0.70,
+        )
+        routing_decision = worker_router.route(task_profile)
+        if routing_decision.selected_worker_id is not None:
+            routing_selection_by_task[str(step.task_id)] = routing_decision.selected_worker_id
+            routing_category_by_task[str(step.task_id)] = routing_decision.task_category
         # Worker routing post-Welle-4:
         #
         # 1. If ``[brain.sub_jarvis].provider`` is set in jarvis.toml,
@@ -1165,7 +1231,7 @@ async def bootstrap_missions(
         # binding onto every Step.  The live lookup remains only for legacy
         # callers/tests that construct a Step outside that flow.
         bound_provider = (getattr(step, "provider_binding", "") or "").strip().lower()
-        live_provider = bound_provider or _live_subagent_provider(sub_jarvis_provider)
+        live_provider = routing_decision.selected_provider or bound_provider
         kind = _select_subagent_worker_kind(live_provider, getattr(step, "model", "") or "")
         if kind == "claude_direct":
             # B3 (open-source AP-22): an Anthropic-API-key-only user has NO `claude`
@@ -1309,6 +1375,71 @@ async def bootstrap_missions(
             return cross
         return ClaudeDirectWorker(capability_inventory=capability_inventory)
 
+    def _record_worker_failure(  # noqa: ANN202
+        step,
+        error_class: str | None,
+        error_detail: str,
+        timed_out: bool,
+    ):
+        from jarvis.julia.routing import FailureRecord, FailureType
+
+        worker_id = routing_selection_by_task.get(str(step.task_id))
+        if worker_id is None:
+            return
+        if timed_out or error_class == "worker_timeout":
+            failure_type = FailureType.TIMEOUT
+        elif error_class == "provider_auth":
+            failure_type = FailureType.AUTH_FAILURE
+        elif error_class == "provider_quota":
+            failure_type = (
+                FailureType.RATE_LIMITED
+                if "rate" in error_detail.lower() or "429" in error_detail
+                else FailureType.QUOTA_EXHAUSTED
+            )
+        elif error_class == "provider_unreachable":
+            failure_type = FailureType.PROVIDER_UNAVAILABLE
+        else:
+            failure_type = FailureType.WORKER_FAILURE
+        worker_registry.record_failure(
+            worker_id,
+            FailureRecord(failure_type=failure_type, reason=error_detail),
+        )
+
+    def _record_worker_outcome(  # noqa: ANN202
+        step,
+        outcome: str,
+        duration_ms: int,
+        actual_cost_usd: float,
+        attempts: int,
+    ):
+        from jarvis.julia.routing import OutcomeRecord
+
+        worker_id = routing_selection_by_task.get(str(step.task_id))
+        worker = worker_registry.get(worker_id) if worker_id is not None else None
+        if worker is None:
+            return
+        succeeded = outcome == "approved"
+        worker_registry.record_outcome(
+            OutcomeRecord(
+                objective_id=str(getattr(step, "objective_id", "") or step.task_id),
+                task_id=str(step.task_id),
+                task_category=routing_category_by_task.get(str(step.task_id), "reasoning"),
+                worker_id=worker.worker_id,
+                provider=worker.provider,
+                model=worker.model,
+                duration_ms=duration_ms,
+                estimated_cost_usd=worker.expected_cost_usd,
+                actual_cost_usd=actual_cost_usd,
+                attempts=attempts,
+                worker_result="success" if succeeded else outcome,
+                critic_result="approve" if succeeded else outcome,
+                failure_type=None if succeeded else worker.last_failure,
+                final_status="success" if succeeded else "failed",
+            )
+        )
+        routing_selection_by_task.pop(str(step.task_id), None)
+        routing_category_by_task.pop(str(step.task_id), None)
+
     kontrollierer = Kontrollierer(
         manager=manager,
         decomposer=decomposer,
@@ -1320,6 +1451,9 @@ async def bootstrap_missions(
         job_factory=_default_job_factory,
         isolation_root=isolation_root,
         provider_binding=lambda: _live_subagent_provider(sub_jarvis_provider),
+        provider_authorization=_authorized_provider_bindings,
+        worker_failure_handler=_record_worker_failure,
+        worker_outcome_handler=_record_worker_outcome,
         max_workers=max_workers,
         safety_enabled=safety_enabled,
         extra_blocked_globs=extra_blocked_globs,
@@ -1426,6 +1560,9 @@ async def bootstrap_missions(
         "recovered_mission_ids": recovered,
         "decomposer": decomposer,
         "worktree_manager": worktree_mgr,
+        "worker_registry": worker_registry,
+        "worker_router": worker_router,
+        "worker_routing_store": routing_store,
     }
 
 
@@ -1453,6 +1590,10 @@ async def shutdown_missions(bootstrap_result: dict[str, Any]) -> None:
     manager = bootstrap_result.get("manager")
     if manager is not None:
         await manager.stop()
+
+    routing_store = bootstrap_result.get("worker_routing_store")
+    if routing_store is not None:
+        routing_store.close()
 
 
 __all__ = ["bootstrap_missions", "shutdown_missions"]

@@ -161,6 +161,12 @@ class Step(BaseModel):
     # compatibility, but every old/vendor value is normalized to this sentinel.
     worker_cli: Literal["configured"] = "configured"
     provider_binding: str = ""
+    # Sprint 1: immutable authority set captured before the plan is published.
+    # The first item is the configured primary; later items are only explicit
+    # fallback providers from the same worker configuration. Runtime failure
+    # may remove candidates but can never append to this tuple.
+    authorized_providers: tuple[str, ...] = ()
+    objective_id: str = ""
 
     @field_validator("worker_cli", mode="before")
     @classmethod
